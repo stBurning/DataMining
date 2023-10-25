@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file>images/fullscreen.png</file>
+        <file>images/exit-fullscreen.png</file>
+    </qresource>
+</RCC>
