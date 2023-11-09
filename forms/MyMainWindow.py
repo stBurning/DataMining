@@ -1,61 +1,15 @@
-from typing import Union
-
 import cv2
 import numpy as np
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot, QMutex, QWaitCondition, QMutexLocker
+from PyQt6.QtCore import pyqtSlot
 from PyQt6.QtGui import QImage, QPixmap, QPalette
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QLabel, QSizePolicy, QWidgetAction
 
 from MainWindow import Ui_MainWindow
 from MyFullScreenWindow import MyFullScreenWindow
+from utils.VideoThread import VideoThread
 
-
-class VideoThread(QThread):
-    """Видеопоток, наследуется от класса QThread"""
-    change_pixmap_signal = pyqtSignal(np.ndarray)
-
-    def __init__(self, source: Union[int, str] = 0, fps=30):
-        super().__init__()
-        self.is_run = True  # Флаг активации
-        self.is_paused = bool()  # Флаг для паузы
-        self.mutex = QMutex()  # Блокировщик потока
-        self.cond = QWaitCondition()  # Условие блокировки
-        self.source = source  # Источник потока (путь до видео-файла, номер веб-камеры)
-        self.fps = fps  # Кол-во кадров в секунду
-
-    def run(self):
-        """Запуск видеопотока"""
-        self.is_run = True
-        capture = cv2.VideoCapture(self.source)
-        while self.is_run:
-            with QMutexLocker(self.mutex):
-                while self.is_paused:
-                    self.cond.wait(self.mutex)
-                ret, cv_img = capture.read()
-                if ret:
-                    self.change_pixmap_signal.emit(cv_img)
-                    self.msleep(int(1000. / self.fps))
-        capture.release()
-        self.close()
-        print("Thread closed")
-
-    def close(self):
-        self.is_run = False
-        self.wait()
-
-    def pause(self):
-        """Выставление паузы у потока"""
-        with QMutexLocker(self.mutex):
-            self.is_paused = True
-
-    def resume(self):
-        """Возобновление после паузы"""
-        if not self.is_paused:
-            return
-        with QMutexLocker(self.mutex):
-            self.is_paused = False
-            self.cond.wakeOne()  # Пробуждаем другие потоки
+from resources import resources
 
 
 # noinspection PyArgumentList
@@ -66,6 +20,7 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def __init__(self):
         super().__init__()  # Инициализация базовых классов
+        self.label = None
         self.thread = None  # Видео поток
         self.full_screen_window = None
         self.setupUi(self)  # Инициализация базовых UI элементов, определенных в базовом классе Ui_MainWindow
@@ -182,7 +137,7 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
             if self.thread is not None:
                 self.__clean_frame()
 
-            self.thread = VideoThread(source=fileName, fps=60)  # Создаем объект потока кадров из файла
+            self.thread = VideoThread(source=fileName, fps=30)  # Создаем объект потока кадров из файла
 
             # добавляем к потоку метод обновления кадра
             self.thread.change_pixmap_signal.connect(self.__update_frame)
@@ -203,11 +158,16 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         :param frame: новый кадр, который необходимо отобразить
         :return:
         """
-        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, ch = image.shape
-        bytes_per_line = ch * w
-        q_image = QImage(image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-        self.imageLabel.setPixmap(QPixmap(q_image))
+        def frameToPixmap(frame):
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = image.shape
+            bytes_per_line = ch * w
+            q_image = QImage(image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            return QPixmap(q_image)
+
+        pixmap = frameToPixmap(frame)
+        self.imageLabel.setPixmap(pixmap)
+        
         self.fitToWindowAct.setEnabled(True)
         # self.scaleFactor = 1.0
         # self.scrollArea.setVisible(True)

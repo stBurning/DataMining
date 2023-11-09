@@ -19,6 +19,9 @@
   <property name="windowTitle">
    <string>Form</string>
   </property>
+  <property name="styleSheet">
+   <string notr="true">background-color: rgb(167, 160, 151);</string>
+  </property>
   <widget class="QWidget" name="horizontalLayoutWidget">
    <property name="geometry">
     <rect>
@@ -109,6 +112,9 @@
     </item>
     <item>
      <widget class="QPushButton" name="pushButton">
+      <property name="styleSheet">
+       <string notr="true">font: 81 11pt &quot;JetBrains Mono ExtraBold&quot;;</string>
+      </property>
       <property name="text">
        <string>Stop</string>
       </property>
