@@ -1,85 +1,20 @@
-import math
+import pickle
 
 import cv2
 import numpy as np
-from PyQt6 import QtWidgets, QtGui, QtCore
+from PyQt6 import QtWidgets, QtCore
 from PyQt6.QtCore import pyqtSlot, Qt
-from PyQt6.QtGui import QImage, QPixmap, QPalette, QPainter, QColor, QFont, QFontMetrics
-from PyQt6.QtWidgets import QFileDialog, QMessageBox, QLabel, QSizePolicy, QWidgetAction
-
+from PyQt6.QtGui import QImage, QPixmap, QPalette
+from PyQt6.QtWidgets import QFileDialog, QMessageBox, QLabel, QSizePolicy
 from PyQt6.QtWidgets import (QWidgetAction,
                              QInputDialog)
-from typing import List, Dict
-from collections import defaultdict
-import pickle
 
 from MainWindow import Ui_MainWindow
 from MyFullScreenWindow import MyFullScreenWindow
+from utils.BoundingBox import BoundingBox
+from utils.Session import Session, StreamType
 from utils.VideoThread import VideoThread
-
 from resources import resources
-
-
-class BoundingBox:
-    def __init__(self, x0, y0, x1, y1, label="Новая метка"):
-        self.x0, self.y0, self.x1, self.y1 = x0, y0, x1, y1
-        self.label = label
-        self.text_bbox = None
-        self.bbox = None
-
-    def update(self, x1, y1):
-        self.x1, self.y1 = x1, y1
-
-    def set_label(self, label):
-        self.label = label
-
-    def copy(self):
-        return BoundingBox(self.x0, self.y0, self.x1, self.y1, self.label)
-
-    def get_diag(self):
-        return math.sqrt((self.x0 - self.x1) ** 2 + (self.y0 - self.y1) ** 2)
-
-    def draw(self, imageLabel: QLabel):
-        pixmap = imageLabel.pixmap()
-        painter = QPainter(pixmap)
-        painter.setWindow(imageLabel.geometry())
-        font = QFont('Helvetica', 12)
-        painter.setFont(font)
-        fontMetrics = QtGui.QFontMetrics(font)
-        painter.setPen(QtGui.QPen(Qt.GlobalColor.green, 4))
-        x, y, w, h = min(self.x0, self.x1), min(self.y0, self.y1), abs(self.x0 - self.x1), abs(self.y0 - self.y1)
-        self.bbox = QtCore.QRect(x, y, w, h)
-        painter.drawRect(self.bbox)
-        text_bbox = fontMetrics.boundingRect(self.label)
-        text_bbox.moveTo(x, y - fontMetrics.height())
-        painter.drawRect(text_bbox)
-        self.text_bbox = painter.drawText(text_bbox, 0, self.label)
-        painter.end()
-        imageLabel.setPixmap(pixmap)
-
-    def label_collides(self, x, y):
-        """
-        Проверяет попадание точки в область текстовой метки
-        :param x: координата x
-        :param y: координата y
-        :return: True, если точка лежит в области текстовой метки, иначе - False
-        """
-        if self.text_bbox is not None:
-            return self.text_bbox.contains(x, y)
-        return False
-
-    def collides(self, x, y):
-        """
-        Проверяет попадание точки в область границы метки
-        :param x: координата x
-        :param y: координата y
-        :return: True, если точка лежит в области границы метки, иначе - False
-        """
-        eps = 5
-        if self.bbox is not None and self.bbox.contains(x, y):
-            return abs(x - self.x0) < eps or abs(x - self.x1) < eps or abs(y - self.y0) < eps or abs(y - self.y1) < eps
-        return False
-
 
 # noinspection PyArgumentList
 class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
@@ -89,13 +24,12 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def __init__(self):
         super().__init__()  # Инициализация базовых классов
-        self.active_bbox = None
-        self.image_pixmap = None
-        self.last_x = None
-        self.last_y = None
-        self.drawing = False
-        self.label = None
-        self.bboxes = []
+        self.session = None
+
+        self.active_bbox = None  # Активная область
+        self.image_pixmap = None  # Текущий кадр
+        self.last_point = None  # Последняя нажатая точка
+        self.drawing = False  # Флаг активного рисования метки
         self.thread = None  # Видео поток
         self.full_screen_window = None
         self.setupUi(self)  # Инициализация базовых UI элементов, определенных в базовом классе Ui_MainWindow
@@ -109,7 +43,10 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         self.pushButton.setVisible(False)
         self.createActions()
         self.createMenus()
-        self.threadOn = False  # Флаг состояния потока вывода
+        self.threadOn = False  # Флаг состояния потока вывода\
+
+        self.load_session()
+        self.draw_bboxes()
 
     def __clean_frame(self):
         if self.thread is not None:
@@ -117,36 +54,103 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
             self.threadOn = False  # Предупреждаем о выключении
             self.thread.close()  # Закрываем
 
-    def openImage(self):
+    def openImageDialog(self):
         """
         Метод, вызываемый при активации события открытия изображения.
         Вызывает диалоговое окно для выбора изображения из файловой системы и
         выводит его в поле imageLabel.
         :return:
         """
-        filePath, _ = QFileDialog.getOpenFileName(self, 'Открытие файла', '',
+        filePath, _ = QFileDialog.getOpenFileName(self, 'Открытие файла', '../sample_data/',
                                                   'Images (*.png *.jpeg *.jpg *.bmp *.gif)')
-        fileName = filePath.split('/')[-1]  # Название файла
-        folderName = filePath.split('/')[-2]  # Папка, содержащая файл
+
         if filePath:
-            image = QImage(filePath)
-            if image.isNull():
-                QMessageBox.information(self, "Image Viewer", "Cannot load %s." % filePath)
-                return
-            self.__clean_frame()
-            # Активация пункта меню с масштабированием изображения
-            self.fitToWindowAct.setEnabled(True)
-            # Загрузка изображения в форму
-            self.image_pixmap = QPixmap.fromImage(image)
-            self.imageLabel.setPixmap(self.image_pixmap)
-            self.scaleFactor = 1.0  # Множитель масштабирования
-            self.scrollArea.setVisible(True)  # Делаем видимым слайдеры
-            self.pushButton.setVisible(False)  # Скрываем кнопку StartStop
-            self.updateActions()  # Включаем возможности масштабирования
-            self.label.setText(f"Из файла {fileName}")
-            self.lineEdit.setText(folderName)
-            if not self.fitToWindowAct.isChecked():
-                self.imageLabel.adjustSize()
+            self.session.filePath = filePath
+            self.session.fileName = self.session.filePath.split('/')[-1]  # Название файла
+            self.session.folderName = self.session.filePath.split('/')[-2]  # Папка, содержащая файл
+            self.openImage()
+
+    def openImage(self, path=None):
+        if path is not None:
+            self.session.filePath = path
+            self.session.fileName = self.session.filePath.split("/")[-1]  # Название файла
+            self.session.folderName = self.session.filePath.split('/')[-2]  # Папка, содержащая файл
+
+        image = QImage(self.session.filePath)
+        if image.isNull():
+            QMessageBox.information(self, "Открытие изображения", "Не удалось открыть %s." % self.session.filePath)
+            return
+        self.__clean_frame()
+        # Активация пункта меню с масштабированием изображения
+        self.fitToWindowAct.setEnabled(True)
+        # Загрузка изображения в форму
+        self.image_pixmap = QPixmap.fromImage(image)
+        self.imageLabel.setPixmap(self.image_pixmap)
+        self.scaleFactor = 1.0  # Множитель масштабирования
+        self.scrollArea.setVisible(True)  # Делаем видимым слайдеры
+        self.pushButton.setVisible(False)  # Скрываем кнопку StartStop
+        self.updateActions()  # Включаем возможности масштабирования
+        self.label.setText(f"Из файла {self.session.fileName}")
+        self.lineEdit.setText(self.session.folderName)
+        if not self.fitToWindowAct.isChecked():
+            self.imageLabel.adjustSize()
+        self.session.streamType = StreamType.image
+
+    def openCamera(self, source=0):
+        """
+        Функция включения веб-камеры.
+        """
+        self.__clean_frame()  # Очищаем текущий кадр, закрываем поток кадров
+        self.session.camera_id = source
+        self.thread = VideoThread(self.session.camera_id)  # Создаем объект потока кадров с веб-камеры
+        # добавляем к потоку метод обновления кадра
+        self.thread.change_pixmap_signal.connect(self.update_frame)
+        self.thread.start()  # Запускаем входящий поток
+        self.threadOn = True  # Устанавливаем флаг, что видео-поток запущен
+        self.pushButton.setVisible(True)  # Делаем кнопку видимой
+        self.pushButton.setText("Stop")  # Меняем надпись на "Стоп"
+        self.label.setText("Из камеры")
+        self.lineEdit.setText("")
+        self.session.streamType = StreamType.camera
+
+    def openVideoDialog(self):
+        """
+        Функция открытия видео-потока из файла.
+        Вызывает диалоговое окно для выбора видео-файла из файловой системы и
+        выводит его в поле imageLabel.
+        """
+        filePath, _ = QFileDialog.getOpenFileName(self, 'QFileDialog.getOpenFileName()', '../sample_data/', '')
+        if filePath:
+            self.session.filePath = filePath
+            self.session.fileName = self.session.filePath.split("/")[-1]  # Название файла
+            self.session.folderName = self.session.filePath.split('/')[-2]  # Папка, содержащая файл
+            self.openVideo()
+
+    def openVideo(self, path=None):
+        try:
+            if path is not None:
+                self.session.filePath = path
+                self.session.fileName = self.session.filePath.split("/")[-1]  # Название файла
+                self.session.folderName = self.session.filePath.split('/')[-2]  # Папка, содержащая файл
+
+            if self.thread is not None:
+                self.__clean_frame()
+
+            self.thread = VideoThread(source=self.session.filePath, fps=30)  # Создаем объект потока кадров из файла
+
+            # Добавляем к потоку метод обновления кадра
+            self.thread.change_pixmap_signal.connect(self.update_frame)
+            self.threadOn = True  # Устанавливаем флаг, что видео-поток запущен
+            self.thread.start()  # Запускаем входящий поток
+            self.scrollArea.setVisible(True)
+            self.pushButton.setVisible(True)  # Делаем кнопку видимой
+            self.pushButton.setText("Stop")  # Меняем надпись на "Стоп"
+            self.label.setText(f"Из файла {self.session.filePath}")
+            self.lineEdit.setText(self.session.folderName)
+            self.session.streamType = StreamType.video
+
+        except Exception as e:
+            print(e)
 
     def open_full_screen(self):
         """ Открытие полноэкранного просмотра
@@ -158,9 +162,7 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
             self.thread.pause()  # Если поток активен - останавливаем на паузу
             self.threadOn = False
         self.imageLabel.setVisible(False)
-        print('self.imageLabel.setVisible(False)')
         self.full_screen_window = MyFullScreenWindow()
-        print('MyFullScreenWindow created')
         self.full_screen_window.closeSignal.connect(self.__close_full_screen)
         self.full_screen_window.fcButton.clicked.connect(self.__toggle_video)
         self.full_screen_window.fcButton.setText('Start')
@@ -195,49 +197,6 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
             self.thread.resume()
             self.threadOn = True
 
-    def openCamera(self):
-        """
-        Функция включения веб-камеры.
-        """
-        self.__clean_frame()  # Очищаем текущий кадр, закрываем поток кадров
-
-        self.thread = VideoThread()  # Создаем объект потока кадров с веб-камеры
-        # добавляем к потоку метод обновления кадра
-        self.thread.change_pixmap_signal.connect(self.update_frame)
-        self.thread.start()  # Запускаем входящий поток
-        self.threadOn = True  # Устанавливаем флаг, что видео-поток запущен
-        self.pushButton.setVisible(True)  # Делаем кнопку видимой
-        self.pushButton.setText("Stop")  # Меняем надпись на "Стоп"
-        self.label.setText("Из камеры")
-        self.lineEdit.setText("")
-
-    def openVideo(self):
-        """
-        Функция открытия видео-потока из файла.
-        Вызывает диалоговое окно для выбора видео-файла из файловой системы и
-        выводит его в поле imageLabel.
-        """
-        filePath, _ = QFileDialog.getOpenFileName(self, 'QFileDialog.getOpenFileName()', '', '')
-        fileName = filePath.split("/")[-1]  # Название файла
-        folderName = filePath.split('/')[-2]  # Папка, содержащая файл
-        try:
-            if self.thread is not None:
-                self.__clean_frame()
-
-            self.thread = VideoThread(source=filePath, fps=30)  # Создаем объект потока кадров из файла
-
-            # добавляем к потоку метод обновления кадра
-            self.thread.change_pixmap_signal.connect(self.update_frame)
-            self.threadOn = True  # Устанавливаем флаг, что видео-поток запущен
-            self.thread.start()  # Запускаем входящий поток
-            self.scrollArea.setVisible(True)
-            self.pushButton.setVisible(True)  # Делаем кнопку видимой
-            self.pushButton.setText("Stop")  # Меняем надпись на "Стоп"
-            self.label.setText(f"Из файла {fileName}")
-            self.lineEdit.setText(folderName)
-        except Exception as e:
-            print(e)
-
     @pyqtSlot(np.ndarray)
     def update_frame(self, frame):
         """
@@ -259,8 +218,9 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         self.fitToWindowAct.setEnabled(True)
 
     def draw_bboxes(self):
-        self.imageLabel.setPixmap(self.image_pixmap)
-        for bbox in self.bboxes:
+        if self.image_pixmap is not None:
+            self.imageLabel.setPixmap(self.image_pixmap)
+        for bbox in self.session.bboxes:
             bbox.draw(self.imageLabel)
 
         if self.active_bbox is not None:
@@ -269,30 +229,30 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
     def mousePress(self, event):
         self.imageLabel.setMouseTracking(True)
         if event.button() == QtCore.Qt.MouseButton.LeftButton:
-            print(f"[mousePressEvent] {event.pos()}")
             x, y = event.pos().x(), event.pos().y()
-            for bbox in self.bboxes:
+            for bbox in self.session.bboxes:
                 if bbox.label_collides(x, y):
                     text, ok = QInputDialog.getText(self, 'Изменение метки', 'Введите название метки:')
                     if ok:
                         bbox.set_label(text)
                         self.draw_bboxes()
                     return
-                if bbox.collides(x, y):
-                    text, ok = QInputDialog.getText(self, 'Удаление метки', 'Введите название метки:')
-                    if ok:
-                        # bbox.set_label(text)
-                        self.bboxes.remove(bbox)
+                if bbox.border_collides(x, y):
+                    dlg = QMessageBox.question(self, "Удаление метки", "Вы хотите удалить метку?")
+                    if dlg == QMessageBox.StandardButton.Yes:
+                        self.session.bboxes.remove(bbox)
                         self.draw_bboxes()
                     return
             self.drawing = True
-            self.last_x = x
-            self.last_y = y
+            self.last_point = (x, y)
 
     def mouseMove(self, event):
+        """
+        Обработка движения мыши для отрисовки метки
+        """
         if event.buttons() and Qt.MouseButton.LeftButton and self.drawing:
-            curr_x, curr_y = event.pos().x(), event.pos().y()
-            self.active_bbox = BoundingBox(self.last_x, self.last_y, curr_x, curr_y)
+            current_point = (event.pos().x(), event.pos().y())
+            self.active_bbox = BoundingBox(*self.last_point, *current_point)
             self.draw_bboxes()
             self.update()
 
@@ -302,8 +262,7 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
                                             'Введите название метки:')
             if ok:
                 self.active_bbox.set_label(text)
-                self.bboxes.append(self.active_bbox.copy())
-                print(self.active_bbox.get_diag())
+                self.session.bboxes.append(self.active_bbox.copy())
             self.active_bbox = None
             self.drawing = False
             self.draw_bboxes()
@@ -360,16 +319,16 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         self.scaleFactor = 1.0
 
     def fitToWindow(self):
-        fitToWindow = self.fitToWindowAct.isChecked()
-        self.scrollArea.setWidgetResizable(fitToWindow)
-        if not fitToWindow:
+        fit_to_window = self.fitToWindowAct.isChecked()
+        self.scrollArea.setWidgetResizable(fit_to_window)
+        if not fit_to_window:
             self.normalSize()
         self.updateActions()
 
     def createActions(self):
-        self.actionImage.triggered.connect(self.openImage)
+        self.actionImage.triggered.connect(self.openImageDialog)
         self.actionImage.setShortcut("Ctrl+O")
-        self.actionVideo.triggered.connect(self.openVideo)
+        self.actionVideo.triggered.connect(self.openVideoDialog)
         self.actionCamera.triggered.connect(self.openCamera)
 
         self.normalSizeAct = QWidgetAction(self)
@@ -410,6 +369,40 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         self.menuView.addAction(self.normalSizeAct)
         self.menuView.addSeparator()
         self.menuView.addAction(self.fitToWindowAct)
+
+    def closeEvent(self, event):
+        """ Обработчик нажатия на крестик (при закрытии приложения) """
+        close = QMessageBox.question(self,
+                                     "Закрытие сессии",
+                                     "Вы уверены, что хотите завершить сессию?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if close == QMessageBox.StandardButton.Yes:
+            with open("./session.pickle", "wb") as f:
+                pickle.dump(self.session, f, protocol=pickle.HIGHEST_PROTOCOL)
+            event.accept()
+        else:
+            event.ignore()
+
+    def load_session(self):
+        try:
+            with open("./session.pickle", 'rb') as fp:
+                self.session = pickle.load(fp, fix_imports=True, encoding='ASCII', errors='strict', buffers=None)
+                self.session.info()
+                if self.session.streamType == StreamType.image:
+                    self.openImage()
+                elif self.session.streamType == StreamType.video:
+                    self.openVideo()
+                elif self.session.streamType == StreamType.camera:
+                    self.openCamera(self.session.camera_id)
+                else:
+                    print("Новая сессия")
+
+        except pickle.UnpicklingError as e:
+            print("Не удалось загрузить сессию")
+            self.session = Session()
+        except FileNotFoundError as e:
+            print("Не удалось загрузить сессию")
+            self.session = Session()
 
 
 if __name__ == "__main__":
