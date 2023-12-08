@@ -1,3 +1,5 @@
+from typing import List
+
 import cv2
 import numpy as np
 from PyQt6 import QtWidgets
@@ -6,6 +8,7 @@ from PyQt6.QtGui import QImage, QPixmap, QPalette
 from PyQt6.QtWidgets import QLabel, QSizePolicy
 
 from FullScreenWindow import Ui_Form
+from utils.BoundingBox import BoundingBox
 
 
 class MyFullScreenWindow(QtWidgets.QWidget, Ui_Form):
@@ -23,12 +26,13 @@ class MyFullScreenWindow(QtWidgets.QWidget, Ui_Form):
         self.imageLabel.setScaledContents(True)
         self.fcScrollArea.setVisible(True)
         self.fcButton.setVisible(True)
+        self.bboxes: List[BoundingBox] = []
         self.fcScrollArea.setWidget(self.imageLabel)
         self.fcFullScreenButton.clicked.connect(self.exit_full_screen)
         self.imageLabel.adjustSize()
 
     @pyqtSlot(np.ndarray)
-    def update_frame(self, frame):
+    def updateFrame(self, frame):
         """
         Функция обновления кадра, производит масштабирование и вывод на imageLabel
         :param frame: входящий кадр
@@ -38,8 +42,14 @@ class MyFullScreenWindow(QtWidgets.QWidget, Ui_Form):
         bytes_per_line = ch * w
         q_image = QImage(image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
         self.imageLabel.setPixmap(QPixmap(q_image))
+        self.drawBoxes()
 
-    def set_source(self, pixmap: QPixmap):
+    def drawBoxes(self):
+        for bbox in self.bboxes:
+            bbox.draw(self.imageLabel)
+        self.update()
+
+    def setImage(self, pixmap: QPixmap):
         """Обновление для картинки
         - используется, для изменения изображения в данном окне из других окон.
         """

@@ -21,7 +21,7 @@
   </property>
   <property name="windowIcon">
    <iconset>
-    <normaloff>C:/Users/Konstantin/Downloads/2023-10-09_22-45-25.png</normaloff>C:/Users/Konstantin/Downloads/2023-10-09_22-45-25.png</iconset>
+    <normaloff>../../../../Konstantin/Downloads/2023-10-09_22-45-25.png</normaloff>../../../../Konstantin/Downloads/2023-10-09_22-45-25.png</iconset>
   </property>
   <property name="styleSheet">
    <string notr="true">background-color: rgb(255, 246, 229);</string>
@@ -31,7 +31,20 @@
     <item>
      <layout class="QHBoxLayout" name="horizontalLayout_3" stretch="10,3">
       <item>
-       <layout class="QVBoxLayout" name="verticalLayout_2" stretch="20,0,1">
+       <layout class="QVBoxLayout" name="verticalLayout_2" stretch="0,20,0,1">
+        <item>
+         <spacer name="verticalSpacer">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>20</width>
+            <height>10</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
         <item>
          <widget class="QScrollArea" name="scrollArea">
           <property name="minimumSize">
@@ -52,7 +65,7 @@ background-color: rgb(238, 252, 255);</string>
             <rect>
              <x>0</x>
              <y>0</y>
-             <width>871</width>
+             <width>874</width>
              <height>617</height>
             </rect>
            </property>
@@ -229,7 +242,7 @@ background-color: rgb(238, 252, 255);</string>
      <x>0</x>
      <y>0</y>
      <width>1168</width>
-     <height>26</height>
+     <height>21</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -245,6 +258,7 @@ background-color: rgb(238, 252, 255);</string>
      <addaction name="actionCamera"/>
     </widget>
     <addaction name="menuOpen"/>
+    <addaction name="actionSave_Project"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -280,6 +294,11 @@ background-color: rgb(238, 252, 255);</string>
   <action name="actionCamera">
    <property name="text">
     <string>Camera</string>
+   </property>
+  </action>
+  <action name="actionSave_Project">
+   <property name="text">
+    <string>Save Project</string>
    </property>
   </action>
  </widget>
